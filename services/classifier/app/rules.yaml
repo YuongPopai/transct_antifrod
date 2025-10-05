@@ -1,0 +1,110 @@
+rules:
+  - name: "high_value_non_card_transfer"
+    enabled: true
+    priority: 10
+    tags: ["value","non-card"]
+    add: 0.45
+    severity: "high"
+    action: "alert"
+    when:
+      - subject: "event.type"
+        op: "eq"
+        value: "transfer"
+      - subject: "event.channel"
+        op: "neq"
+        value: "card"
+      - subject: "features.amount"
+        op: "gt"
+        value: 5000
+
+  - name: "watchlist_recipient"
+    enabled: true
+    add: 0.7
+    tags: ["watchlist","wl"]
+    severity: "high"
+    action: "block"
+    when:
+      - subject: "event.tags"
+        op: "contains"
+        value: "watchlist"
+
+  - name: "many_new_recipients_windowed"
+    enabled: true
+    add: 0.35
+    tags: ["new-recipient","idf"]
+    scope: "dst"
+    combine: "all"
+    window_minutes: 60
+    min_count: 2
+    when:
+      - subject: "features.idf"
+        op: "gt"
+        value: 0.6
+      - subject: "features.amount"
+        op: "gt"
+        value: 50
+
+  - name: "rapid_sender_velocity_any"
+    add: 0.45
+    tags: ["velocity"]
+    combine: "any"
+    when:
+      - subject: "features.velocity"
+        op: "gt"
+        value: 0.1
+      - subject: "event.src_risk_score"
+        op: "gt"
+        value: 0.2
+
+  - name: "ping_pong_back_and_forth"
+    add: 0.6
+    tags: ["ping-pong"]
+    when:
+      - subject: "features.pingpong"
+        op: "gt"
+        value: 0.1
+
+  - name: "currency_mismatch_small"
+    add: 0.2
+    tags: ["currency","small"]
+    when:
+      - subject: "event.currency"
+        op: "neq"
+        value: "EUR"
+      - subject: "features.amount"
+        op: "lt"
+        value: 10
+
+  - name: "round_amount_structuring"
+    add: 0.25
+    tags: ["structuring","round"]
+    when:
+      - subject: "features.is_round"
+        op: "eq"
+        value: true
+
+  - name: "suspicious_account_name"
+    add: 0.15
+    tags: ["naming"]
+    when:
+      - subject: "event.account_name"
+        op: "regex"
+        value: "test|tmp|dummy"
+
+  - name: "legacy_min_max_example"
+    add: 0.1
+    when:
+      min_amount: 100
+      max_amount: 1000
+      has_tag: "structuring"
+
+  - name: "not_eur_high_tx"
+    enabled: true
+    priority: 5
+    tags: ["currency","inverted"]
+    negate: true
+    add: 0.12
+    when:
+      - subject: "event.currency"
+        op: "eq"
+        value: "EUR"

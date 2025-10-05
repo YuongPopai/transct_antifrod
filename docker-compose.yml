@@ -1,0 +1,172 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    ports:
+      - "127.0.0.1:55432:5432"
+    environment:
+      POSTGRES_DB: antifraud
+      POSTGRES_USER: antifraud
+      POSTGRES_PASSWORD: antifraud
+    volumes:
+      - antifraud_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U antifraud -d antifraud -h localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  db-init:
+    build: ./db
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: antifraud
+      POSTGRES_USER: antifraud
+      POSTGRES_PASSWORD: antifraud
+      SEED_USERS: 50000
+      SEED_MIN_AGR: 1
+      SEED_MAX_AGR: 3
+      SEED_TXN_PER_ACC_MIN: 5
+      SEED_TXN_PER_ACC_MAX: 15
+      SEED_CURRENCIES: RUB,USD,EUR
+      SEED_SUSPICIOUS_USER_SHARE: "0.10"
+      SEED_EMPTY_USER_SHARE: "0.15"
+      SEED_FRAUD_TXN_SHARE: "0.03"
+      SEED_RECOMPUTE_BALANCES: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["seed"]
+
+  kafka:
+    image: apache/kafka:latest
+    container_name: kafka
+    ports:
+      - "127.0.0.1:9092:9092"
+    environment:
+      # === KRaft (обязательно) ===
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_NODE_ID: "1"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      CLUSTER_ID: "5L6g3nShT-eMCtK--X86sw"   # можно оставить фиксированный для dev
+
+      # === Слушатели ===
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+
+      # === Single-broker настройки ===
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  producer-valid:
+    build: ./services/producer-valid
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      TOPIC: tx.all
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: antifraud
+      POSTGRES_USER: antifraud
+      POSTGRES_PASSWORD: antifraud
+      LOCAL_TZ: Europe/Amsterdam
+      SLEEP_MIN: "0.35"
+      SLEEP_MAX: "1.2"
+      REFRESH_ACCOUNTS_SEC: "300"
+      SEED_CURRENCIES: RUB,USD,EUR
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_started
+    restart: unless-stopped
+  producer-fraud:
+    build: ./services/producer-fraud
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      TOPIC: tx.all
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: antifraud
+      POSTGRES_USER: antifraud
+      POSTGRES_PASSWORD: antifraud
+      LOCAL_TZ: Europe/Amsterdam
+      SLEEP_MIN: "0.8"
+      SLEEP_MAX: "2.5"
+      REFRESH_ACCOUNTS_SEC: "300"
+      NIGHT_CHANCE: "0.45"
+      ROUND_DOLLAR_SHARE: "0.35"
+      FRAUD_STRUCTURING: "true"
+      FRAUD_VELOCITY: "true"
+      FRAUD_PINGPONG: "true"
+      FRAUD_CASHOUT_WATCH: "true"
+      FRAUD_XCUR: "true"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_started
+    restart: unless-stopped
+  classifier:
+    build: ./services/classifier
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      TOPIC_IN: tx.all
+      TOPIC_OUT_LEGIT: tx.legit
+      TOPIC_OUT_SUS: tx.sus
+      GROUP_ID: classifier-v1
+      LOCAL_TZ: Europe/Amsterdam
+      RULES_PATH: /app/app/rules.yaml
+      REFRESH_RULES_SEC: "10"
+      READ_DB_FLAGS: "false"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web-ui:
+    build: ./services/web-ui
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      TOPIC_RAW: tx.all
+      TOPIC_LEGIT: tx.legit
+      TOPIC_SUS: tx.sus
+      GROUP_BASE: webui
+    ports:
+      - "127.0.0.1:3000:8000"
+    command: ["uvicorn","app.main:app","--host","0.0.0.0","--port","8000"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  antifraud_pgdata:
+  kafka_data:
