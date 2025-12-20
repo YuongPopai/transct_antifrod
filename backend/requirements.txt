@@ -1,0 +1,15 @@
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+pydantic==2.10.3
+pydantic-settings==2.6.1
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+SQLAlchemy==2.0.36
+asyncpg==0.30.0
+aiokafka==0.12.0
+orjson==3.10.12
+python-multipart==0.0.17
+lark==1.1.9
+passlib[argon2]
+argon2-cffi
+requests==2.32.5
